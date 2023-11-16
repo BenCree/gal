@@ -59,7 +59,7 @@ def sf1(rmol_data_dict):
         raise ValueError(f"Missing necessary data: {', '.join(missing_keys)}")
 
     # Calculate the score
-    sf1 = rmol_data_dict['plip'] * rmol_data_dict['QED'] * rmol_data_dict['cnnaffinity']#* rmol_data_dict['plip'] * (1 + (0.5 * len(rmol_data_dict['interactions']))) * (
+    sf1 = -rmol_data_dict['cnnaffinity'] / rmol_data_dict['MW'] #rmol_data_dict['plip'] * rmol_data_dict['QED'] * rmol_data_dict['cnnaffinity']#* rmol_data_dict['plip'] * (1 + (0.5 * len(rmol_data_dict['interactions']))) * (
           #      10 ** (rmol_data_dict['cnnaffinity'] / rmol_data_dict['MW']))
 
     return sf1

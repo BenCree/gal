@@ -22,6 +22,12 @@ from pathlib import Path
 from al_for_fep.configs.simple_greedy_gaussian_process import get_config as get_gaussian_process_config
 import ncl_cycle
 from ncl_cycle import ALCycler
+from rdkit.SimDivFilters import rdSimDivPickers
+
+from rdkit import DataStructs
+from rdkit.DataStructs import cDataStructs
+from rdkit.DataStructs.cDataStructs import ExplicitBitVect
+from rdkit.Chem import rdMolDescriptors
 
 cwd = os.getcwd()
 
@@ -45,7 +51,66 @@ class ActiveLearner:
               f"{self.feature_column} no: {len(self.virtual_library[~self.virtual_library[self.feature_column].isna()])}, "
               f"mean {self.feature_column}: {best_finds}")
 
-    def get_next_best(self):
+    def row_to_bitvect(self, row):
+        bit_string = ''.join(str(bit) for bit in row)
+        return cDataStructs.CreateFromBitString(bit_string)
+
+    def diverse_sample(self, n_select, *args, **kwargs):
+        rgroup_df = pd.read_csv('rgroups_clust_df.csv')
+        # linker_df = pd.read_csv('linkers_clustered.csv') # Uncomment if linkers are to be used
+        dfs = [rgroup_df]  # Add linker_df to the list if needed
+        thresh = 0.6
+        selected_molecules = []
+
+        for df in dfs:
+            clusters = df['cluster'].unique()
+            picked_list = []
+            cluster_dfs = []
+            for cluster in clusters:
+                cluster_df = df[df['cluster'] == cluster]
+                fps = cluster_df['fp'].apply(self.row_to_bitvect).tolist()
+
+                picker = rdSimDivPickers.LeaderPicker()
+                picked_indices = list(picker.LazyBitVectorPick(fps, len(fps), thresh))
+                fp1 = fps[picked_indices[0]]
+                fp2 = fps[picked_indices[1]]
+
+                similarity = DataStructs.FingerprintSimilarity(fp1, fp2)
+
+                print(f"for cluster {cluster}: \n picked smiles : {cluster_df['Smiles'].iloc[picked_indices[0]]} and "
+                      f"{cluster_df['Smiles'].iloc[picked_indices[1]]}, "
+                      f"their tanimoto similarity is {similarity}")
+
+                picked_list.append(picked_indices)
+                clust_pick_df = cluster_df.iloc[picked_indices[:2]]
+                cluster_dfs.append(clust_pick_df)
+                print(f'for cluster {cluster} picked {len(picked_indices)} mols')
+                selected_molecules.extend(clust_pick_df)
+
+
+            # Concatenate all the DataFrames from each cluster into one
+            pick_df = pd.concat(cluster_dfs, ignore_index=True) #TODO retrieve mols from chemical space with these rgroups by finding all smiles that were created from these rgroup IDs (ID is currently nan)
+
+
+        return pick_df
+
+#
+    #
+    #
+            #get rgroup/linker ID for picked smiles
+            #repeat 2 times, one for rgroups, one for linkers
+
+        # df of n smiles, rgroup_ID, linker_ID
+        # get ID for rgroups/linkers
+
+        # list of  ids = [rgroup_ID, linker_ID]
+        # get mols from chemical space that have rgroup_id = ids[0], linker_ID = ids[1]
+        # return dataframe of id from total space, smiles, cnnaffinity, training (T/F)
+
+
+        #return list of chosen smiles
+
+    def get_next_best(self, random=True):
         not_null_rows = self.virtual_library[self.virtual_library[self.feature_column].notnull()]
         print(not_null_rows)
         if len(not_null_rows) == 0:
@@ -53,9 +118,12 @@ class ActiveLearner:
             true_rows = self.virtual_library[self.virtual_library.Training == True]
             if len(true_rows) != 0:
                 raise AssertionError(f"Found rows with Training == True but feature column values are null, virtual library hasn't been updated from previous cycle. The rows are:\n{true_rows}")
-
-            random_starter = self.virtual_library.sample(self.cycler._cycle_config.selection_config.num_elements)
-            return random_starter
+            if random is True:
+                starter = self.virtual_library.sample(self.cycler._cycle_config.selection_config.num_elements)
+            else:
+                print('Diverse set : True')
+                starter = self.diverse_sample(self.virtual_library, self.cycler._cycle_config.selection_config.num_elements)
+            return starter
         # AL
         start_time = time.time()
         print('AL on virtual library: ', self.virtual_library)
@@ -100,14 +168,15 @@ def expand_chemical_space(al):
 
 if __name__ == '__main__':
     config = get_gaussian_process_config()
-    config.virtual_library = "chemical_space_smiles_500.csv"
+    config.virtual_library = "manual_init.csv"
     config.selection_config.num_elements = 30  # how many new to select
     config.selection_config.selection_columns = ["cnnaffinity", "Smiles"]
     config.model_config.targets.params.feature_column = 'cnnaffinity'
     config.model_config.features.params.fingerprint_size = 2048
     al = ActiveLearner(config)
     for i in range(5):
-        chosen_ones = al.get_next_best()
+        chosen_ones = al.get_next_best(random=False)
+        chosen_ones['Smiles']
         for i, row in chosen_ones.iterrows():
             result = compute_fegrow(row.Smiles)  # TODO no conformers? penalise
             al.set_answer(row.Smiles, result)

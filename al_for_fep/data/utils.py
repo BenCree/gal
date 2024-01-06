@@ -98,13 +98,27 @@ def parse_feature_smiles_rdkit_properties(
   start = time.time()
   descriptors = [name for name, _ in Chem.Descriptors.descList]
   calculator = MoleculeDescriptors.MolecularDescriptorCalculator(descriptors)
+  import pandas as pd
+  import numpy as np
 
-  print(f"Computed Descriptors in {time.time() - start} for {len(feature_dataframe)} rows")
-  return np.array([
+  # Assuming your NumPy array is called 'data'
+  data = np.array([
       np.array(calculator.CalcDescriptors(Chem.MolFromSmiles(smiles)))
       for smiles in feature_dataframe[feature_column]
   ])
+  df = pd.DataFrame(data, columns=descriptors)
 
+  positive_df = df.loc[:, (df >= 0).all()]
+
+  positive_data = positive_df.to_numpy()
+
+  # Specify the filename where you want to save the CSV file
+  output_file = '/home/c0065492/code/gal/cs50k/output.csv'
+
+  # Save the DataFrame as a CSV file
+  positive_df.to_csv(output_file, index=False, header=False) 
+  print(f"Computed Descriptors in {time.time() - start} for {len(feature_dataframe)} rows")
+  return positive_data
 
 def parse_feature_smiles_morgan_fingerprint_with_descriptors(
     feature_dataframe, feature_column,

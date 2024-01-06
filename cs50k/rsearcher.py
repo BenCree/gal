@@ -81,7 +81,7 @@ def dask_tanimito_similarity(a, b):
 
 if __name__ == '__main__':
     # quantity/sizes and algorithms
-    quantity_sizes = [50, 200, 300, 400, 500]
+    quantity_sizes = [50, 200, 300, 400, 500]# 200, 50]
     algorithms = ['ucbrandom', 'greedyrandom', 'gbmrandom']
     ucb_params = ['_0_1', '_1', '_10']
 
@@ -100,12 +100,13 @@ if __name__ == '__main__':
     al_for_fep.data.utils.parse_feature_smiles_morgan_fingerprint = dask_parse_feature_smiles_morgan_fingerprint
     al_for_fep.models.sklearn_gaussian_process_model._tanimoto_similarity = dask_tanimito_similarity
 
-    for repeat in range(1,6):
+    for repeat in range(2,6):
         repeat_dir = f'./rep_{repeat}'
         os.makedirs(repeat_dir, exist_ok=True)
         print(f'making: {repeat_dir}')
 
         for config_dir in config_directories:
+            start = time.time()
             shutil.rmtree('/home/c0065492/code/gal/cs50k/generated')
             os.makedirs('/home/c0065492/code/gal/cs50k/generated')
             # Import the specific configuration
@@ -132,7 +133,7 @@ if __name__ == '__main__':
             try:
                     for iteration in range(round(2500 / config.selection_config.num_elements) + 1): # constant number of mols scored
                         print(f'> Iteration {iteration} finished. Next.')
-                        selection = al.get_next_best()
+                        selection = al.get_next_best(diverse_start=True)
 
                         # look up the precomputed values
                         # use our FEgrow ID "fid" to identify each row
@@ -149,8 +150,10 @@ if __name__ == '__main__':
                         
                         al.csv_cycle_summary(selection)
                          
-                        with open('./generated/config.py','w') as f:
-                            f.write(str(config))
+                    with open('./generated/config.py','w') as f:
+                        f.write(str(config))
+                        f.write(f'time,{time.time()} - {start},s')
+                        f.close
 
                     copy_dir = f'{config_dir}_generated'
                     print(f'copying to: {copy_dir}')

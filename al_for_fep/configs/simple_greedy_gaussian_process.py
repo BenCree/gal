@@ -22,7 +22,7 @@ def get_config():
       'model_config':
           ml_collections.ConfigDict({
               'model_type':
-                  'gbm',
+                  'gp',
               'hyperparameters':
                   ml_collections.ConfigDict(),
               'tuning_hyperparameters': [{}],

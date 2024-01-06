@@ -18,7 +18,7 @@ import os.path
 import time
 import warnings
 import subprocess
-
+import numpy as np
 import pandas as pd
 import numpy
 import requests
@@ -31,6 +31,11 @@ from al_for_fep.configs.simple_greedy_gaussian_process import get_config as get_
 import ncl_cycle
 from ncl_cycle import ALCycler
 from enamine import Enamine
+from rdkit import Chem
+from rdkit.Chem import AllChem
+from rdkit.SimDivFilters.rdSimDivPickers import MaxMinPicker
+from rdkit import DataStructs
+
 
 class ActiveLearner:
     def __init__(self, config, client, initial_values=pd.DataFrame()):
@@ -72,37 +77,60 @@ class ActiveLearner:
               f"training: {len(self.virtual_library[self.virtual_library.Training])}, "
               f"{self.feature} no: {len(self.virtual_library[~self.virtual_library[self.feature].isna()])}, "
               f"mean {self.feature}: {best_finds}")
+    def diverse_sample(self, print_matrix=True):
+        vl = self.virtual_library
+        mols = [Chem.MolFromSmiles(smiles) for smiles in vl['Smiles']]
+        fps = [AllChem.GetMorganFingerprintAsBitVect(mol, 2) for mol in mols if mol is not None]
+        num_to_pick = self.cycler._cycle_config.selection_config.num_elements
 
-    def get_next_best(self):
-        # in the first iteration there is no data, pick random molecules
-        not_null_rows = self.virtual_library[self.virtual_library.cnnaffinity.notnull()]
-        if len(not_null_rows) == 0:
-            # there is nothing dedicated to Training yet
-            assert len(self.virtual_library[self.virtual_library.Training == True]) == 0
+        def tanimoto_distance(fps, i, j):
+            return 1.0 - DataStructs.FingerprintSimilarity(fps[i], fps[j])
 
-            random_starter = self.virtual_library.sample(self.cycler._cycle_config.selection_config.num_elements)
-            return random_starter
+        picker = MaxMinPicker()
+        pick_indices = picker.LazyPick(lambda i, j: tanimoto_distance(fps, i, j), len(fps), num_to_pick)
+        chosen_ones = vl.iloc[pick_indices]
 
-        start_time = time.time()
-        chosen_ones, virtual_library_regression = self.cycler.run_cycle(self.virtual_library)
-        print(f"Found next best {len(chosen_ones)} in: {time.time() - start_time:.1f}s")
+        def print_similarity_matrix_ascii(molecules):
+            # Calculate fingerprints
+            fingerprints = [AllChem.GetMorganFingerprintAsBitVect(mol, 2) for mol in molecules]
 
-        enamines = virtual_library_regression[virtual_library_regression.enamine_id.notna() &
-                                              virtual_library_regression.cnnaffinity.isna()]
-        if len(enamines) > 0:
-            print(f"Adding on top {len(enamines)} Enamine molecules to be computed.")
-        # select only the ones that have been chosen before
-        best_finds = self.virtual_library[self.virtual_library[self.feature] < -6]  # -6 is about 5% of the best cases
-        print(f"IT: {self.cycle}, lib: {len(self.virtual_library)}, "
-              f"training: {len(self.virtual_library[self.virtual_library.Training])}, "
-              f"feature no: {len(self.virtual_library[~self.virtual_library[self.feature].isna()])}, "
-              f"<-6 feature: {len(best_finds)}")
+            # Initialize a matrix to store similarities
+            num_molecules = len(fingerprints)
+            similarity_matrix = np.zeros((num_molecules, num_molecules))
 
-    def get_next_best(self, force_random=False, add_enamines=0):
+            # Compute Tanimoto similarity for each pair of molecules
+            for i in range(num_molecules):
+                for j in range(num_molecules):
+                    similarity_matrix[i, j] = DataStructs.TanimotoSimilarity(fingerprints[i], fingerprints[j])
+
+            # Print formatted matrix
+            cell_width = 6
+            print("Tanimoto Similarity Matrix:")
+
+            # Print column headers
+            print(" " * (cell_width + 3) + " ".join(f"{i:<{cell_width}}" for i in range(num_molecules)))
+
+            # Print each row with row header
+            for i, row in enumerate(similarity_matrix):
+                formatted_row = " ".join(f"{val:<{cell_width}.2f}" for val in row)
+                print(f"{i:<{cell_width}} {formatted_row}")
+            return
+
+        mols = [Chem.MolFromSmiles(smiles) for smiles in chosen_ones['Smiles']]
+        if print_matrix == True:
+            print_similarity_matrix_ascii(mols)
+
+        return chosen_ones
+    
+    def get_next_best(self, force_random=False, add_enamines=0, diverse_start=False):
         self.cycle += 1
-
-        # pick random molecules
+        
         rows_not_yet_computed = self.virtual_library[~self.virtual_library[self.feature].notnull()]
+        # pick diverse mols (MaxMin)
+        if len(rows_not_yet_computed) == len(self.virtual_library) and diverse_start:
+            print("Selecting diverse initial molecules via MaxMin.")
+            chosen_ones = self.diverse_sample()
+        # pick random molecules
         if len(rows_not_yet_computed) == len(self.virtual_library) or force_random:
             print("Selecting random molecules to study. ")
             chosen_ones = rows_not_yet_computed.sample(self.cycler._cycle_config.selection_config.num_elements)
